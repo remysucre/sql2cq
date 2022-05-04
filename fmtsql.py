@@ -1,3 +1,4 @@
+from ast import keyword
 import sqlparse
 import argparse
 
@@ -11,4 +12,4 @@ file_name = args.file
 with open(file_name) as f:
     sql = f.read()
     statements = sqlparse.split(sql)
-    print(sqlparse.format(statements[0], reindent=True, keyword_case='upper'))
+    print(sqlparse.format(statements[0], reindent=True))
