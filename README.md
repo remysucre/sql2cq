@@ -4,4 +4,4 @@ The current scripts "normalizes" a `SELECT-FROM-WHERE` query, by striping away e
 
 1. Compile with `cargo build --release` (install cargo [here](https://rustup.rs))
 2. Enter pipenv with `pipenv shell` (install pipenv [here](https://pipenv.pypa.io/en/latest/))
-3. Run `bash normalize.sh old new` where old is a directory containing input SQL queries, one file per query, and new is a directory to hold the normalized queries.
+3. Run `bash normalize.sh old new` where `old` is a directory containing input SQL queries, one file per query, and `new` is a directory to hold the normalized queries.
