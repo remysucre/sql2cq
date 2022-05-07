@@ -1,0 +1,2 @@
+q = an(an.person_id) * chn(chn.id) * ci(an.person_id,ci.movie_id,chn.id,ci.role_id) * cn(mc.company_id) * mc(ci.movie_id,mc.company_id) * n(an.person_id) * rt(ci.role_id) * t(ci.movie_id)
+

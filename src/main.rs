@@ -1,6 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
 
+use indexmap::IndexMap;
 use sqlparser::ast::*;
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -24,18 +25,6 @@ fn main() {
 
     if let Statement::Query(q) = &mut stmt {
         if let SetExpr::Select(q) = &mut q.body {
-            let frm = &q.from;
-
-            for t in frm {
-                let r = &t.relation;
-                if let TableFactor::Table { name, alias:_, .. } = r {
-                    println!("{:#?}", &name.0[0].value);
-                    // println!("{:#?}", &alias.as_ref().unwrap().name.value);
-                    print!("{:#?}", SCHEMA.get(&name.0[0].value));
-                } else {
-                    panic!("Not supported");
-                }
-            }
 
             let mut filters = vec![];
             let mut joins = vec![];
@@ -44,11 +33,68 @@ fn main() {
                 get_joins(sel, &mut joins, &mut filters);
             }
 
+            let mut uf = UnionFind::default();
+            let mut col_id = IndexMap::new();
+
+            for (l, r) in joins.iter() {
+                let next_id = col_id.len();
+                let l_id = *col_id.entry(l).or_insert(next_id);
+                if uf.size() < col_id.len() {
+                    uf.make_set();
+                }
+                assert_eq!(uf.size(), col_id.len());
+
+                let next_id = col_id.len();
+                let r_id = *col_id.entry(r).or_insert(next_id);
+                if uf.size() < col_id.len() {
+                    uf.make_set();
+                }
+                assert_eq!(uf.size(), col_id.len());
+
+                let ll = uf.find_mut(l_id);
+                let lr = uf.find_mut(r_id);
+                uf.union(ll, lr);
+            }
+
+            let frm = &q.from;
+
+            let mut atoms = vec![];
+
+            for t in frm {
+                let r = &t.relation;
+                if let TableFactor::Table { name, alias, .. } = r {
+                    let cols = SCHEMA.get(&name.0[0].value).unwrap();
+                    let rel = &alias.as_ref().unwrap().name.value;
+                    let mut vars = vec![];
+                    for col in cols {
+                        let idents = vec![
+                            alias.as_ref().unwrap().name.clone(),
+                            Ident { value: col.clone(), quote_style: None }, 
+                            ];
+
+                        if let Some(id) = col_id.get(&idents) {
+                            let col_str = *col_id.get_index(uf.find(*id)).unwrap().0;
+                            let mut var = vec![];
+                            for s in col_str {
+                                var.push(s.value.clone());
+                            }
+                            vars.push(var.join("."));
+                        }
+                    }
+                    atoms.push(format!("{}({})", rel, vars.join(",")));
+                } else {
+                    panic!("Not supported");
+                }
+            }
+
+            // println!("q :- {}.", atoms.join(", "));
+            println!("q = {}", atoms.join(" * "));
+
             let j = joins.pop().expect("Query has no joins");
-            q.selection = Some(joins.drain(..).fold(j, |l, r| Expr::BinaryOp {
+            q.selection = Some(joins.drain(..).fold(mk_join(j), |l, r| Expr::BinaryOp {
                 left: Box::new(l),
                 op: BinaryOperator::And,
-                right: Box::new(r),
+                right: Box::new(mk_join(r)),
             }));
         } else {
             panic!("Only SELECT-PROJECT-JOIN queries are supported");
@@ -60,7 +106,16 @@ fn main() {
     println!("{};", stmt);
 }
 
-fn get_joins(e: &Expr, joins: &mut Vec<Expr>, filters: &mut Vec<Expr>) {
+fn mk_join(lr: (Vec<Ident>, Vec<Ident>)) -> Expr {
+    let (l, r) = lr;
+    Expr::BinaryOp { 
+        left: Box::new(Expr::CompoundIdentifier(l)), 
+        op: BinaryOperator::Eq, 
+        right: Box::new(Expr::CompoundIdentifier(r)),
+    }
+}
+
+fn get_joins(e: &Expr, joins: &mut Vec<(Vec<Ident>, Vec<Ident>)>, filters: &mut Vec<Expr>) {
     if let Expr::BinaryOp {
         left: l,
         op: o,
@@ -68,8 +123,8 @@ fn get_joins(e: &Expr, joins: &mut Vec<Expr>, filters: &mut Vec<Expr>) {
     } = e
     {
         match (&**l, o, &**r) {
-            (Expr::CompoundIdentifier(_), BinaryOperator::Eq, Expr::CompoundIdentifier(_)) => {
-                joins.push(e.clone())
+            (Expr::CompoundIdentifier(l), BinaryOperator::Eq, Expr::CompoundIdentifier(r)) => {
+                joins.push((l.clone(), r.clone()))
             }
             (e_l, BinaryOperator::And, e_r) => {
                 get_joins(e_l, joins, filters);
@@ -79,6 +134,55 @@ fn get_joins(e: &Expr, joins: &mut Vec<Expr>, filters: &mut Vec<Expr>) {
         }
     } else {
         filters.push(e.clone());
+    }
+}
+
+type Id = usize;
+
+#[derive(Debug, Clone, Default)]
+pub struct UnionFind {
+    parents: Vec<Id>,
+}
+
+impl UnionFind {
+    pub fn make_set(&mut self) -> Id {
+        let id = Id::from(self.parents.len());
+        self.parents.push(id);
+        id
+    }
+
+    pub fn size(&self) -> usize {
+        self.parents.len()
+    }
+
+    fn parent(&self, query: Id) -> Id {
+        self.parents[usize::from(query)]
+    }
+
+    fn parent_mut(&mut self, query: Id) -> &mut Id {
+        &mut self.parents[usize::from(query)]
+    }
+
+    pub fn find(&self, mut current: Id) -> Id {
+        while current != self.parent(current) {
+            current = self.parent(current)
+        }
+        current
+    }
+
+    pub fn find_mut(&mut self, mut current: Id) -> Id {
+        while current != self.parent(current) {
+            let grandparent = self.parent(self.parent(current));
+            *self.parent_mut(current) = grandparent;
+            current = grandparent;
+        }
+        current
+    }
+
+    /// Given two leader ids, unions the two eclasses making root1 the leader.
+    pub fn union(&mut self, root1: Id, root2: Id) -> Id {
+        *self.parent_mut(root2) = root1;
+        root1
     }
 }
 
@@ -95,7 +199,7 @@ lazy_static!{
                     let cols: Vec<_> = columns.iter().map(|col| col.name.value.clone()).collect();
                     schema.insert(name.0[0].value.clone(), cols);
                 } else {
-                    panic!("Schema string contains a statement that is not CREATE TABLE");
+                    panic!("SCHEMA_STR contains a statement that is not CREATE TABLE");
                 }
         };
         schema
