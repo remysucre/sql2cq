@@ -25,7 +25,6 @@ fn main() {
 
     if let Statement::Query(q) = &mut stmt {
         if let SetExpr::Select(q) = &mut q.body {
-
             let mut filters = vec![];
             let mut joins = vec![];
 
@@ -69,8 +68,11 @@ fn main() {
                     for col in cols {
                         let idents = vec![
                             alias.as_ref().unwrap().name.clone(),
-                            Ident { value: col.clone(), quote_style: None }, 
-                            ];
+                            Ident {
+                                value: col.clone(),
+                                quote_style: None,
+                            },
+                        ];
 
                         if let Some(id) = col_id.get(&idents) {
                             let col_str = *col_id.get_index(uf.find(*id)).unwrap().0;
@@ -108,9 +110,9 @@ fn main() {
 
 fn mk_join(lr: (Vec<Ident>, Vec<Ident>)) -> Expr {
     let (l, r) = lr;
-    Expr::BinaryOp { 
-        left: Box::new(Expr::CompoundIdentifier(l)), 
-        op: BinaryOperator::Eq, 
+    Expr::BinaryOp {
+        left: Box::new(Expr::CompoundIdentifier(l)),
+        op: BinaryOperator::Eq,
         right: Box::new(Expr::CompoundIdentifier(r)),
     }
 }
@@ -146,7 +148,7 @@ pub struct UnionFind {
 
 impl UnionFind {
     pub fn make_set(&mut self) -> Id {
-        let id = Id::from(self.parents.len());
+        let id = self.parents.len();
         self.parents.push(id);
         id
     }
@@ -156,11 +158,11 @@ impl UnionFind {
     }
 
     fn parent(&self, query: Id) -> Id {
-        self.parents[usize::from(query)]
+        self.parents[query]
     }
 
     fn parent_mut(&mut self, query: Id) -> &mut Id {
-        &mut self.parents[usize::from(query)]
+        &mut self.parents[query]
     }
 
     pub fn find(&self, mut current: Id) -> Id {
@@ -186,22 +188,28 @@ impl UnionFind {
     }
 }
 
-lazy_static!{
+lazy_static! {
     static ref SCHEMA: HashMap<String, Vec<String>> = {
         let dialect = GenericDialect {};
         let schema_stmts = Parser::parse_sql(&dialect, SCHEMA_STR).unwrap();
         let mut schema = HashMap::new();
         for stmt in schema_stmts {
-            if let Statement::CreateTable { 
-                or_replace: _, temporary: _, external: _, if_not_exists: _, 
-                name, columns, ..} = stmt 
-                {
-                    let cols: Vec<_> = columns.iter().map(|col| col.name.value.clone()).collect();
-                    schema.insert(name.0[0].value.clone(), cols);
-                } else {
-                    panic!("SCHEMA_STR contains a statement that is not CREATE TABLE");
-                }
-        };
+            if let Statement::CreateTable {
+                or_replace: _,
+                temporary: _,
+                external: _,
+                if_not_exists: _,
+                name,
+                columns,
+                ..
+            } = stmt
+            {
+                let cols: Vec<_> = columns.iter().map(|col| col.name.value.clone()).collect();
+                schema.insert(name.0[0].value.clone(), cols);
+            } else {
+                panic!("SCHEMA_STR contains a statement that is not CREATE TABLE");
+            }
+        }
         schema
     };
 }
